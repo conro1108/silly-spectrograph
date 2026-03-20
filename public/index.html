@@ -552,7 +552,6 @@ let vibeState = 'Peaceful 🌿';
 let vibeLast = 0;
 let rmsHistory = new Float32Array(120); // ~2s at 60fps
 let rmsHistIdx = 0;
-let fluxPrev = null;
 let fluxHistory = new Float32Array(120);
 let fluxHistIdx = 0;
 
@@ -636,7 +635,7 @@ const paletteBtns    = document.querySelectorAll('.palette-swatch');
 let specCtx, overlayCtx;
 let rafId = null;
 let lastFrameTime = 0;
-let scrollX = 0; // sub-pixel scroll accumulator
+let userPaused = false;
 
 // Marker scroll tracking
 let markerScrollOffset = 0; // pixels scrolled since app start
@@ -969,31 +968,25 @@ function computeRms() {
 
 function drawStrip(w, h, pixels) {
   const pal = PALETTES[prefs.palette];
-  const imageData = specCtx.getImageData(0, 0, w, h);
-  const data = imageData.data;
 
-  // Shift left by `pixels`
-  const bytesPerRow = w * 4;
-  const shiftBytes = pixels * 4;
-  for (let y = 0; y < h; y++) {
-    const rowStart = y * bytesPerRow;
-    data.copyWithin(rowStart, rowStart + shiftBytes, rowStart + bytesPerRow);
-  }
+  // GPU-accelerated shift: blit canvas onto itself offset left
+  specCtx.drawImage(specCanvas, pixels, 0, w - pixels, h, 0, 0, w - pixels, h);
 
-  // Draw new column(s) on right edge
-  for (let col = w - pixels; col < w; col++) {
+  // Draw new column(s) on right edge using a small ImageData
+  const strip = specCtx.createImageData(pixels, h);
+  const data = strip.data;
+  for (let col = 0; col < pixels; col++) {
     for (let y = 0; y < h; y++) {
       const bin = freqMap ? freqMap[y] : Math.floor(y / h * fftData.length);
       const val = Math.min(255, Math.floor(fftData[bin]));
-      const pi = (y * w + col) * 4;
+      const pi = (y * pixels + col) * 4;
       data[pi]   = pal[val*4];
       data[pi+1] = pal[val*4+1];
       data[pi+2] = pal[val*4+2];
       data[pi+3] = 255;
     }
   }
-
-  specCtx.putImageData(imageData, 0, 0);
+  specCtx.putImageData(strip, w - pixels, 0);
 }
 
 function drawOverlay(w, h, dt) {
@@ -1087,7 +1080,8 @@ function detectSounds(now) {
   // Bass/music: 40-250Hz, sustained > 2s
   const bassEnergy = getBandEnergy(40, 250);
   const bassMatch = bassEnergy > ambient * 1.5 && bassEnergy > 20;
-  if (bassMatch) ds.bass.sustained += 16; else ds.bass.sustained = Math.max(0, ds.bass.sustained - 50);
+  const frameDt = (now - (ds.bass._lastTime || now)); ds.bass._lastTime = now;
+  if (bassMatch) ds.bass.sustained += frameDt; else ds.bass.sustained = Math.max(0, ds.bass.sustained - 50);
   if (ds.bass.sustained > 2000 && now - ds.bass.lastTrigger > COOLDOWN) {
     ds.bass.lastTrigger = now; ds.bass.sustained = 0;
     spawnParticles(['🎵','🎶','🔊'], 8);
@@ -1147,7 +1141,7 @@ function computeFlux() {
     const diff = (fftData[i]/255) - fluxPrevData[i];
     if (diff > 0) flux += diff;
   }
-  for (let i = 0; i < fftData.length; i++) fluxPrevData[i] = fftData[i]/255;
+  for (let i = 0; i < fftData.length; i += step) fluxPrevData[i] = fftData[i]/255;
   return flux / 32;
 }
 
@@ -1164,8 +1158,8 @@ function varianceOf(arr) {
 // NO AUDIO WATCHER
 // ─────────────────────────────────────────────────────────────
 
-let lastAudioTime = Date.now();
-function setupNoAudioWatcher() { lastAudioTime = Date.now(); }
+let lastAudioTime = 0;
+function setupNoAudioWatcher() { lastAudioTime = performance.now(); }
 
 function checkNoAudio(rms, now) {
   if (rms > 0.005) {
@@ -1185,13 +1179,17 @@ function checkNoAudio(rms, now) {
 // ARIA
 // ─────────────────────────────────────────────────────────────
 
+let prevAriaLevel = '';
 function updateAriaLabel(rms) {
   let level;
   if (rms < 0.02) level = 'minimal';
   else if (rms < 0.06) level = 'low';
   else if (rms < 0.15) level = 'moderate';
   else level = 'high';
-  specCanvas.setAttribute('aria-label', `Live audio spectrograph showing ${level} activity`);
+  if (level !== prevAriaLevel) {
+    prevAriaLevel = level;
+    specCanvas.setAttribute('aria-label', `Live audio spectrograph showing ${level} activity`);
+  }
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -1228,11 +1226,14 @@ function takeSnapshot() {
   ctx.fillStyle = '#94a3b8';
   ctx.fillText(text2, pad, h - pad);
 
-  const url = tmp.toDataURL('image/png');
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = `spectrograph-${Date.now()}.png`;
-  a.click();
+  tmp.toBlob(blob => {
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `spectrograph-${Date.now()}.png`;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }, 'image/png');
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -1244,6 +1245,7 @@ function dropMarker() {
   const label = formatTime(now);
   const m = { timestamp: now.toISOString(), label };
   markers.push(m);
+  if (markers.length > 500) markers = markers.slice(-500);
   saveMarkers();
 
   const w = specCanvas.width;
@@ -1391,7 +1393,8 @@ document.addEventListener('touchmove', cancelLongPress, { passive: true });
 document.addEventListener('keydown', e => {
   if (e.code === 'Space' && document.activeElement === document.body) {
     e.preventDefault();
-    if (rafId) {
+    userPaused = !userPaused;
+    if (userPaused) {
       cancelAnimationFrame(rafId);
       rafId = null;
     } else {
@@ -1409,8 +1412,10 @@ document.addEventListener('visibilitychange', () => {
     if (rafId) { cancelAnimationFrame(rafId); rafId = null; }
     if (audioCtx && audioCtx.state === 'running') audioCtx.suspend();
   } else {
-    if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume();
-    if (appEl.style.display === 'block' && !rafId) startRenderLoop();
+    if (!userPaused) {
+      if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume();
+      if (appEl.style.display === 'block' && !rafId) startRenderLoop();
+    }
   }
 });
 
@@ -1445,7 +1450,7 @@ loadPrefs();
 loadMarkers();
 
 // Check browser support
-if (!navigator.mediaDevices || !window.AudioContext && !window.webkitAudioContext) {
+if (!navigator.mediaDevices || (!window.AudioContext && !window.webkitAudioContext)) {
   startBtn.disabled = true;
   errorBox.style.display = 'block';
   errorMsg.textContent = 'Web Audio API not supported. Please use Chrome, Edge, or Safari.';
