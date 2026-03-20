@@ -229,7 +229,7 @@ html, body {
   display: flex; align-items: center; justify-content: space-between;
   gap: 12px;
 }
-.setting-row label { font-size: 14px; color: var(--text-primary); flex: 1; }
+.setting-row label:not(.toggle) { font-size: 14px; color: var(--text-primary); flex: 1; }
 
 /* Sliders */
 input[type="range"] {
@@ -457,10 +457,6 @@ input[type="range"]:focus-visible { outline: 2px solid var(--accent-light); outl
       <label for="autogain-toggle">Auto-Gain</label>
       <label class="toggle"><input type="checkbox" id="autogain-toggle" aria-label="Auto-gain"><span class="toggle-slider"></span></label>
     </div>
-    <div class="setting-row">
-      <label for="lowpower-toggle">Low Power Mode</label>
-      <label class="toggle"><input type="checkbox" id="lowpower-toggle" aria-label="Low power mode"><span class="toggle-slider"></span></label>
-    </div>
   </div>
 </div>
 
@@ -504,7 +500,7 @@ const FREQ_TICKS = [20,50,100,200,500,1000,2000,5000,10000,20000];
 
 let prefs = {
   palette: 'thermal', gain: 3.0, speed: 2, smoothing: 0.75,
-  freqLabels: false, autoGain: false, soundDetective: true, lowPower: false
+  freqLabels: false, autoGain: false, soundDetective: true
 };
 let markers = [];
 
@@ -566,7 +562,6 @@ let particles = [];
 
 function spawnParticles(emojis, count = 5) {
   if (!prefs.soundDetective) return;
-  if (prefs.lowPower) return;
   for (let i = 0; i < count; i++) {
     if (particles.length >= MAX_PARTICLES) break;
     const ow = overlayCanvas.width, oh = overlayCanvas.height;
@@ -630,7 +625,6 @@ const speedSlider    = document.getElementById('speed-slider');
 const smoothSlider   = document.getElementById('smooth-slider');
 const freqToggle     = document.getElementById('freq-toggle');
 const autogainToggle = document.getElementById('autogain-toggle');
-const lowpowerToggle = document.getElementById('lowpower-toggle');
 const amplitudeBar   = document.getElementById('amplitude-bar');
 const paletteBtns    = document.querySelectorAll('.palette-swatch');
 
@@ -771,7 +765,7 @@ async function startAudio() {
 }
 
 function updateFFTSettings() {
-  fftSize = prefs.lowPower ? 2048 : 4096;
+  fftSize = 4096;
   analyser.fftSize = fftSize;
   analyser.smoothingTimeConstant = prefs.smoothing;
   fftData = new Uint8Array(analyser.frequencyBinCount);
@@ -904,8 +898,7 @@ function startRenderLoop() {
 }
 
 function renderFrame(now) {
-  const targetFps = prefs.lowPower ? 30 : 60;
-  const targetInterval = 1000 / targetFps;
+  const targetInterval = 1000 / 60;
   const dt = (now - lastFrameTime) / 1000;
 
   if (now - lastFrameTime < targetInterval - 1) {
@@ -1047,7 +1040,7 @@ function drawOverlay(w, h, dt) {
   markerVisuals = markerVisuals.filter(mv => mv.x > -50);
 
   // Draw particles
-  if (!prefs.lowPower) {
+  {
     updateParticles(dt);
     for (const p of particles) {
       overlayCtx.globalAlpha = p.life * 0.9;
@@ -1368,12 +1361,6 @@ autogainToggle.addEventListener('change', () => {
   if (!prefs.autoGain && gainNode) gainNode.gain.value = prefs.gain;
   savePrefs();
 });
-lowpowerToggle.addEventListener('change', () => {
-  prefs.lowPower = lowpowerToggle.checked;
-  if (analyser) updateFFTSettings();
-  savePrefs();
-});
-
 // Sound detective toggle
 detectiveBtn.addEventListener('click', () => {
   prefs.soundDetective = !prefs.soundDetective;
@@ -1460,7 +1447,6 @@ function applyPrefsToUI() {
   smoothSlider.value    = prefs.smoothing;
   freqToggle.checked    = prefs.freqLabels;
   autogainToggle.checked = prefs.autoGain;
-  lowpowerToggle.checked = prefs.lowPower;
   detectiveBtn.classList.toggle('active', prefs.soundDetective);
   detectiveBtn.setAttribute('aria-pressed', prefs.soundDetective ? 'true' : 'false');
 
