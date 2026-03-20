@@ -428,6 +428,7 @@ input[type="range"]:focus-visible { outline: 2px solid var(--accent-light); outl
       <button class="palette-swatch" data-palette="neon" aria-label="Neon palette" role="radio" aria-checked="false" style="background:linear-gradient(to top,#0d0d1a,#4b0082,#9b59b6,#ff00ff,#00ffff)">N</button>
       <button class="palette-swatch" data-palette="grayscale" aria-label="Grayscale palette" role="radio" aria-checked="false" style="background:linear-gradient(to top,#000,#555,#aaa,#fff)">G</button>
       <button class="palette-swatch" data-palette="park" aria-label="Park palette" role="radio" aria-checked="false" style="background:linear-gradient(to top,#0a1f0a,#1a4a1a,#4a7a2a,#c8a84b,#e8dcc8)">P</button>
+      <button class="palette-swatch" data-palette="paper" aria-label="Paper palette" role="radio" aria-checked="false" style="background:linear-gradient(to top,#f5f3ed,#a09585,#322d26)">&#x270E;</button>
     </div>
   </div>
 
@@ -490,7 +491,8 @@ const PALETTES = (() => {
     ocean:     makePalette([[0,8,20],[3,4,94],[0,77,182],[0,180,216],[0,240,200],[200,250,255]]),
     neon:      makePalette([[13,13,26],[40,0,80],[100,0,160],[200,0,200],[255,50,255],[0,255,255]]),
     grayscale: makePalette([[0,0,0],[64,64,64],[128,128,128],[200,200,200],[255,255,255]]),
-    park:      makePalette([[10,31,10],[26,74,26],[74,122,42],[139,100,43],[200,168,75],[232,220,200]])
+    park:      makePalette([[10,31,10],[26,74,26],[74,122,42],[139,100,43],[200,168,75],[232,220,200]]),
+    paper:     makePalette([[245,243,237],[220,215,205],[160,155,145],[100,95,85],[50,45,38],[15,12,8]])
   };
 })();
 
@@ -968,8 +970,10 @@ function computeRms() {
   return Math.sqrt(sum / checks.length);
 }
 
-// Noise floor: suppress low-level mic noise (especially at low frequencies)
-const NOISE_FLOOR = 8; // values below this are treated as silence
+// Noise suppression: frequency-dependent noise gate + power curve for contrast
+const NOISE_FLOOR_BASE = 18;   // base noise floor (mid/high frequencies)
+const NOISE_FLOOR_LOW  = 40;   // stronger suppression for low frequencies (mic rumble)
+const NOISE_FLOOR_KNEE = 0.15; // bottom 15% of spectrograph gets extra suppression
 
 function drawStrip(w, h, pixels) {
   const pal = PALETTES[prefs.palette];
@@ -994,14 +998,22 @@ function drawStrip(w, h, pixels) {
       } else {
         val = fftData[Math.floor(y / h * fLen)];
       }
-      // Apply noise floor
-      val = Math.max(0, val - NOISE_FLOOR);
-      // Rescale to full range after noise floor subtraction
-      val = Math.min(255, Math.floor(val * (255 / (255 - NOISE_FLOOR))));
+      // Frequency-dependent noise floor: stronger at bottom (low freq = mic rumble)
+      const yPct = y / h; // 0 = top (high freq), 1 = bottom (low freq)
+      const noiseFloor = yPct > (1 - NOISE_FLOOR_KNEE)
+        ? NOISE_FLOOR_BASE + (NOISE_FLOOR_LOW - NOISE_FLOOR_BASE) * ((yPct - (1 - NOISE_FLOOR_KNEE)) / NOISE_FLOOR_KNEE)
+        : NOISE_FLOOR_BASE;
+      val = Math.max(0, val - noiseFloor);
+      // Rescale to full range
+      const maxVal = 255 - noiseFloor;
+      let norm = maxVal > 0 ? val / maxVal : 0;
+      // Power curve for contrast: suppresses low-level noise, boosts real signals
+      norm = norm * norm;
+      const idx = Math.min(255, Math.floor(norm * 255));
       const pi = (y * pixels + col) * 4;
-      data[pi]   = pal[val*4];
-      data[pi+1] = pal[val*4+1];
-      data[pi+2] = pal[val*4+2];
+      data[pi]   = pal[idx*4];
+      data[pi+1] = pal[idx*4+1];
+      data[pi+2] = pal[idx*4+2];
       data[pi+3] = 255;
     }
   }
