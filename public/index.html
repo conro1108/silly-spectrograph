@@ -542,7 +542,7 @@ let autoGainLevel = 1;
 let detectorState = {
   bird:  { consec: 0, lastTrigger: 0 },
   dog:   { consec: 0, lastTrigger: 0 },
-  bass:  { consec: 0, lastTrigger: 0, sustained: 0 },
+  bass:  { consec: 0, lastTrigger: 0, sustained: 0, _lastTime: 0 },
   loud:  { consec: 0, lastTrigger: 0 }
 };
 let birdPrevEnergy = 0;
@@ -1232,7 +1232,7 @@ function takeSnapshot() {
     a.href = url;
     a.download = `spectrograph-${Date.now()}.png`;
     a.click();
-    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    setTimeout(() => URL.revokeObjectURL(url), 30000);
   }, 'image/png');
 }
 
