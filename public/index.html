@@ -1,0 +1,1459 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>Silly Spectrograph v2</title>
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --bottom-bar-height: 64px;
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-left: env(safe-area-inset-left, 0px);
+  --safe-right: env(safe-area-inset-right, 0px);
+  --ui-bg: rgba(10, 10, 15, 0.88);
+  --ui-border: rgba(255,255,255,0.12);
+  --text-primary: #e2e8f0;
+  --text-secondary: #94a3b8;
+  --accent: #7c3aed;
+  --accent-light: #a78bfa;
+}
+
+html, body {
+  width: 100%; height: 100%;
+  overflow: hidden;
+  background: #000;
+  color: var(--text-primary);
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+/* ── INTRO SCREEN ── */
+#intro {
+  position: fixed; inset: 0;
+  display: flex; flex-direction: column;
+  align-items: center; justify-content: center;
+  background: #080810;
+  z-index: 1000;
+  padding: 24px;
+  gap: 16px;
+  text-align: center;
+}
+#intro h1 {
+  font-size: clamp(28px, 6vw, 48px);
+  font-weight: 800;
+  background: linear-gradient(135deg, #f97316, #a78bfa, #22d3ee);
+  -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+  background-clip: text;
+  letter-spacing: -0.02em;
+}
+#intro p {
+  color: var(--text-secondary);
+  max-width: 420px;
+  font-size: 16px;
+}
+#intro-canvas {
+  width: min(320px, 90vw); height: 80px;
+  border-radius: 12px;
+  background: #0a0a14;
+}
+#start-btn {
+  padding: 16px 40px;
+  font-size: 18px; font-weight: 700;
+  border-radius: 50px;
+  border: none; cursor: pointer;
+  background: linear-gradient(135deg, #7c3aed, #2563eb);
+  color: #fff;
+  min-width: 220px; min-height: 56px;
+  transition: transform 0.15s, box-shadow 0.15s;
+  box-shadow: 0 4px 24px rgba(124,58,237,0.5);
+}
+#start-btn:hover { transform: translateY(-2px); box-shadow: 0 8px 32px rgba(124,58,237,0.6); }
+#start-btn:active { transform: translateY(0); }
+#start-btn:focus-visible { outline: 3px solid var(--accent-light); outline-offset: 3px; }
+#start-btn:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
+
+/* ── ERROR STATE ── */
+#error-box {
+  display: none;
+  background: rgba(220,38,38,0.15);
+  border: 1px solid rgba(220,38,38,0.4);
+  border-radius: 12px;
+  padding: 16px 20px;
+  max-width: 440px;
+  text-align: left;
+}
+#error-box h3 { color: #fca5a5; margin-bottom: 8px; font-size: 15px; }
+#error-box p { color: var(--text-secondary); font-size: 13px; margin-bottom: 12px; }
+#retry-btn {
+  padding: 10px 24px; font-size: 14px; font-weight: 600;
+  border-radius: 8px; border: none; cursor: pointer;
+  background: rgba(220,38,38,0.3); color: #fca5a5;
+  min-height: 44px; min-width: 44px;
+}
+#retry-btn:hover { background: rgba(220,38,38,0.5); }
+
+/* ── MAIN APP ── */
+#app {
+  display: none;
+  position: fixed; inset: 0;
+}
+
+/* ── CANVASES ── */
+#spec-canvas, #overlay-canvas {
+  position: absolute; inset: 0;
+  width: 100%; height: 100%;
+  touch-action: manipulation;
+}
+#overlay-canvas { pointer-events: none; }
+
+/* ── BOTTOM BAR ── */
+#bottom-bar {
+  position: fixed;
+  bottom: 0; left: 0; right: 0;
+  height: calc(var(--bottom-bar-height) + var(--safe-bottom));
+  padding-bottom: var(--safe-bottom);
+  display: flex; align-items: center;
+  justify-content: space-around;
+  background: var(--ui-bg);
+  border-top: 1px solid var(--ui-border);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  z-index: 100;
+  transition: opacity 0.4s, transform 0.4s;
+}
+.bar-btn {
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 4px;
+  min-width: 44px; min-height: 44px;
+  padding: 4px 12px;
+  border: none; background: none; cursor: pointer;
+  color: var(--text-secondary);
+  border-radius: 10px;
+  transition: color 0.2s, background 0.2s;
+  font-size: 20px;
+  position: relative;
+}
+.bar-btn:hover { color: var(--text-primary); background: rgba(255,255,255,0.08); }
+.bar-btn:focus-visible { outline: 2px solid var(--accent-light); outline-offset: 2px; }
+.bar-btn.active { color: var(--accent-light); }
+.bar-btn span.label {
+  font-size: 10px; font-weight: 600; letter-spacing: 0.04em;
+  text-transform: uppercase; line-height: 1;
+}
+
+/* ── VIBE CHECK PILL ── */
+#vibe-pill {
+  background: rgba(30,30,50,0.9);
+  border: 1px solid var(--ui-border);
+  border-radius: 20px;
+  padding: 6px 14px;
+  font-size: 13px; font-weight: 600;
+  color: var(--text-primary);
+  white-space: nowrap;
+  transition: opacity 0.5s, background 0.5s;
+  min-height: 44px;
+  display: flex; align-items: center;
+  max-width: 160px;
+}
+
+/* ── GEAR BUTTON ── */
+#gear-btn {
+  position: fixed;
+  top: calc(8px + var(--safe-top));
+  right: calc(8px + var(--safe-right));
+  width: 44px; height: 44px;
+  display: flex; align-items: center; justify-content: center;
+  background: var(--ui-bg);
+  border: 1px solid var(--ui-border);
+  border-radius: 12px;
+  cursor: pointer;
+  font-size: 22px;
+  z-index: 200;
+  transition: opacity 0.4s, transform 0.4s;
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  color: var(--text-primary);
+}
+#gear-btn:hover { background: rgba(255,255,255,0.12); }
+#gear-btn:focus-visible { outline: 2px solid var(--accent-light); outline-offset: 2px; }
+
+/* ── SETTINGS PANEL ── */
+#settings-panel {
+  position: fixed;
+  top: 0; right: 0;
+  width: min(340px, 92vw);
+  height: 100%;
+  background: rgba(8, 8, 18, 0.97);
+  border-left: 1px solid var(--ui-border);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  z-index: 300;
+  transform: translateX(100%);
+  transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  overflow-y: auto;
+  padding: calc(16px + var(--safe-top)) 20px calc(20px + var(--safe-bottom)) 20px;
+  display: flex; flex-direction: column; gap: 20px;
+}
+#settings-panel.open { transform: translateX(0); }
+#settings-panel h2 {
+  font-size: 18px; font-weight: 700;
+  display: flex; align-items: center; justify-content: space-between;
+}
+#close-settings {
+  background: none; border: none; cursor: pointer;
+  color: var(--text-secondary); font-size: 20px;
+  min-width: 44px; min-height: 44px;
+  display: flex; align-items: center; justify-content: center;
+  border-radius: 8px;
+  transition: color 0.2s, background 0.2s;
+}
+#close-settings:hover { color: var(--text-primary); background: rgba(255,255,255,0.08); }
+#close-settings:focus-visible { outline: 2px solid var(--accent-light); }
+#settings-backdrop {
+  display: none;
+  position: fixed; inset: 0;
+  background: rgba(0,0,0,0.5);
+  z-index: 299;
+}
+
+.setting-group { display: flex; flex-direction: column; gap: 10px; }
+.setting-label {
+  font-size: 12px; font-weight: 700; letter-spacing: 0.08em;
+  text-transform: uppercase; color: var(--text-secondary);
+}
+.setting-row {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 12px;
+}
+.setting-row label { font-size: 14px; color: var(--text-primary); flex: 1; }
+
+/* Sliders */
+input[type="range"] {
+  -webkit-appearance: none; appearance: none;
+  width: 100%; height: 4px;
+  background: rgba(255,255,255,0.15);
+  border-radius: 2px; outline: none;
+}
+input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 18px; height: 18px;
+  border-radius: 50%;
+  background: var(--accent-light);
+  cursor: pointer;
+  box-shadow: 0 0 8px rgba(167,139,250,0.5);
+}
+input[type="range"]:focus-visible { outline: 2px solid var(--accent-light); outline-offset: 4px; }
+
+/* Toggle */
+.toggle {
+  position: relative; display: inline-block;
+  width: 44px; height: 26px; flex-shrink: 0;
+}
+.toggle input { opacity: 0; width: 0; height: 0; }
+.toggle-slider {
+  position: absolute; inset: 0;
+  background: rgba(255,255,255,0.15);
+  border-radius: 13px;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+.toggle-slider::after {
+  content: '';
+  position: absolute;
+  left: 3px; top: 3px;
+  width: 20px; height: 20px;
+  border-radius: 50%;
+  background: #fff;
+  transition: transform 0.2s;
+}
+.toggle input:checked + .toggle-slider { background: var(--accent); }
+.toggle input:checked + .toggle-slider::after { transform: translateX(18px); }
+.toggle input:focus-visible + .toggle-slider { outline: 2px solid var(--accent-light); outline-offset: 2px; }
+
+/* Palette Swatches */
+.palette-grid {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 8px;
+}
+.palette-swatch {
+  border-radius: 8px; height: 48px; cursor: pointer;
+  border: 2px solid transparent;
+  transition: border-color 0.2s, transform 0.15s;
+  display: flex; align-items: flex-end; justify-content: center;
+  padding-bottom: 4px;
+  font-size: 10px; font-weight: 700;
+  color: rgba(255,255,255,0.85);
+  text-shadow: 0 1px 2px rgba(0,0,0,0.8);
+  min-height: 44px;
+}
+.palette-swatch:hover { transform: scale(1.05); }
+.palette-swatch.selected { border-color: #fff; }
+.palette-swatch:focus-visible { outline: 2px solid var(--accent-light); outline-offset: 3px; }
+
+/* Amplitude indicator */
+#amplitude-bar {
+  height: 6px; border-radius: 3px;
+  background: linear-gradient(to right, #22d3ee, #a78bfa, #f97316);
+  width: 0%; transition: width 0.1s linear;
+  max-width: 100%;
+}
+#amplitude-wrap { background: rgba(255,255,255,0.08); border-radius: 3px; overflow: hidden; height: 6px; }
+
+/* ── ZEN MODE ── */
+.zen-hidden { opacity: 0 !important; pointer-events: none !important; }
+.zen-hint {
+  position: fixed;
+  bottom: calc(80px + var(--safe-bottom));
+  left: 50%; transform: translateX(-50%);
+  background: var(--ui-bg);
+  border-radius: 8px;
+  padding: 10px 16px;
+  font-size: 13px; color: var(--text-secondary);
+  z-index: 50;
+  pointer-events: none;
+  transition: opacity 0.5s;
+  white-space: nowrap;
+  border: 1px solid var(--ui-border);
+}
+
+/* ── STATUS ── */
+#status-bar {
+  position: fixed;
+  top: calc(12px + var(--safe-top));
+  left: 50%; transform: translateX(-50%);
+  background: rgba(234,179,8,0.15);
+  border: 1px solid rgba(234,179,8,0.3);
+  border-radius: 8px;
+  padding: 8px 16px;
+  font-size: 13px; color: #fde68a;
+  z-index: 150;
+  display: none;
+  max-width: 90vw;
+  text-align: center;
+}
+
+/* ── FREQ LABELS ── */
+.freq-label {
+  position: absolute;
+  right: 0;
+  font-size: 11px; color: rgba(255,255,255,0.5);
+  pointer-events: none;
+  text-shadow: 0 0 4px rgba(0,0,0,0.8);
+  padding-right: 4px;
+  transform: translateY(-50%);
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  letter-spacing: -0.02em;
+}
+
+/* ── LOADING CANVAS ── */
+#loading-overlay {
+  position: fixed; inset: 0;
+  background: #080810;
+  z-index: 500;
+  display: none;
+  align-items: center; justify-content: center;
+  flex-direction: column; gap: 12px;
+}
+#loading-canvas {
+  width: min(300px, 80vw); height: 80px;
+  border-radius: 12px;
+}
+#loading-overlay p { color: var(--text-secondary); font-size: 14px; }
+</style>
+</head>
+<body>
+
+<!-- ── INTRO ── -->
+<div id="intro" role="main">
+  <h1>Silly Spectrograph</h1>
+  <p>Watch sound paint itself across the screen. Birds, bass, barks — all revealed.</p>
+  <canvas id="intro-canvas" aria-hidden="true"></canvas>
+  <button id="start-btn">Start Listening</button>
+  <div id="error-box" role="alert" aria-live="assertive">
+    <h3>Microphone access needed</h3>
+    <p id="error-msg"></p>
+    <button id="retry-btn">Try Again</button>
+  </div>
+</div>
+
+<!-- ── LOADING ── -->
+<div id="loading-overlay" aria-live="polite" aria-label="Loading audio">
+  <canvas id="loading-canvas" aria-hidden="true"></canvas>
+  <p>Listening…</p>
+</div>
+
+<!-- ── MAIN APP ── -->
+<div id="app">
+  <canvas id="spec-canvas" role="img" aria-label="Live audio spectrograph"></canvas>
+  <canvas id="overlay-canvas" aria-hidden="true"></canvas>
+
+  <div id="status-bar" aria-live="assertive" aria-atomic="true"></div>
+
+  <!-- Freq labels container -->
+  <div id="freq-labels" aria-hidden="true" style="position:absolute;inset:0;pointer-events:none;overflow:hidden;"></div>
+
+  <!-- Gear button -->
+  <button id="gear-btn" aria-label="Open settings" aria-haspopup="dialog">⚙️</button>
+
+  <!-- Bottom bar -->
+  <div id="bottom-bar" role="toolbar" aria-label="Controls">
+    <button class="bar-btn" id="detective-btn" aria-label="Toggle Sound Detective" aria-pressed="false">
+      🔍<span class="label">Detect</span>
+    </button>
+    <div id="vibe-pill" aria-live="polite" aria-atomic="true" role="status">🌿 Peaceful</div>
+    <button class="bar-btn" id="snapshot-btn" aria-label="Take sound snapshot">
+      📸<span class="label">Snap</span>
+    </button>
+    <button class="bar-btn" id="marker-btn" aria-label="Drop time marker">
+      📌<span class="label">Mark</span>
+    </button>
+  </div>
+</div>
+
+<!-- ── SETTINGS PANEL ── -->
+<div id="settings-backdrop" aria-hidden="true"></div>
+<div id="settings-panel" role="dialog" aria-modal="true" aria-label="Settings" tabindex="-1">
+  <h2>Settings <button id="close-settings" aria-label="Close settings">✕</button></h2>
+
+  <div class="setting-group">
+    <div class="setting-label">Color Palette</div>
+    <div class="palette-grid" role="radiogroup" aria-label="Color palette">
+      <button class="palette-swatch selected" data-palette="thermal" aria-label="Thermal palette" role="radio" aria-checked="true" style="background:linear-gradient(to top,#000,#7c0000,#e25822,#ffd700,#fff8dc)">T</button>
+      <button class="palette-swatch" data-palette="ocean" aria-label="Ocean palette" role="radio" aria-checked="false" style="background:linear-gradient(to top,#000814,#03045e,#0077b6,#00b4d8,#caf0f8)">O</button>
+      <button class="palette-swatch" data-palette="neon" aria-label="Neon palette" role="radio" aria-checked="false" style="background:linear-gradient(to top,#0d0d1a,#4b0082,#9b59b6,#ff00ff,#00ffff)">N</button>
+      <button class="palette-swatch" data-palette="grayscale" aria-label="Grayscale palette" role="radio" aria-checked="false" style="background:linear-gradient(to top,#000,#555,#aaa,#fff)">G</button>
+      <button class="palette-swatch" data-palette="park" aria-label="Park palette" role="radio" aria-checked="false" style="background:linear-gradient(to top,#0a1f0a,#1a4a1a,#4a7a2a,#c8a84b,#e8dcc8)">P</button>
+    </div>
+  </div>
+
+  <div class="setting-group">
+    <div class="setting-label">Gain (Sensitivity)</div>
+    <input type="range" id="gain-slider" min="0.5" max="10" step="0.1" value="3" aria-label="Gain">
+    <div id="amplitude-wrap"><div id="amplitude-bar"></div></div>
+  </div>
+
+  <div class="setting-group">
+    <div class="setting-label">Scroll Speed</div>
+    <input type="range" id="speed-slider" min="1" max="8" step="1" value="2" aria-label="Scroll speed">
+  </div>
+
+  <div class="setting-group">
+    <div class="setting-label">FFT Smoothing</div>
+    <input type="range" id="smooth-slider" min="0" max="0.95" step="0.05" value="0.5" aria-label="FFT smoothing">
+  </div>
+
+  <div class="setting-group">
+    <div class="setting-row">
+      <label for="freq-toggle">Frequency Labels</label>
+      <label class="toggle"><input type="checkbox" id="freq-toggle" aria-label="Show frequency labels"><span class="toggle-slider"></span></label>
+    </div>
+    <div class="setting-row">
+      <label for="autogain-toggle">Auto-Gain</label>
+      <label class="toggle"><input type="checkbox" id="autogain-toggle" aria-label="Auto-gain"><span class="toggle-slider"></span></label>
+    </div>
+    <div class="setting-row">
+      <label for="lowpower-toggle">Low Power Mode</label>
+      <label class="toggle"><input type="checkbox" id="lowpower-toggle" aria-label="Low power mode"><span class="toggle-slider"></span></label>
+    </div>
+  </div>
+</div>
+
+<script>
+'use strict';
+
+// ─────────────────────────────────────────────────────────────
+// CONSTANTS & PALETTES
+// ─────────────────────────────────────────────────────────────
+
+const PALETTES = (() => {
+  function makePalette(stops) {
+    // stops: [[r,g,b], ...] from 0..255
+    const lut = new Uint8ClampedArray(256 * 4);
+    for (let i = 0; i < 256; i++) {
+      const t = i / 255 * (stops.length - 1);
+      const lo = Math.floor(t), hi = Math.min(lo + 1, stops.length - 1);
+      const f = t - lo;
+      lut[i*4]   = stops[lo][0] + (stops[hi][0] - stops[lo][0]) * f;
+      lut[i*4+1] = stops[lo][1] + (stops[hi][1] - stops[lo][1]) * f;
+      lut[i*4+2] = stops[lo][2] + (stops[hi][2] - stops[lo][2]) * f;
+      lut[i*4+3] = 255;
+    }
+    return lut;
+  }
+  return {
+    thermal:   makePalette([[0,0,0],[80,0,0],[200,30,0],[226,88,34],[255,200,0],[255,255,220]]),
+    ocean:     makePalette([[0,8,20],[3,4,94],[0,77,182],[0,180,216],[0,240,200],[200,250,255]]),
+    neon:      makePalette([[13,13,26],[40,0,80],[100,0,160],[200,0,200],[255,50,255],[0,255,255]]),
+    grayscale: makePalette([[0,0,0],[64,64,64],[128,128,128],[200,200,200],[255,255,255]]),
+    park:      makePalette([[10,31,10],[26,74,26],[74,122,42],[139,100,43],[200,168,75],[232,220,200]])
+  };
+})();
+
+const FREQ_TICKS = [20,50,100,200,500,1000,2000,5000,10000,20000];
+
+// ─────────────────────────────────────────────────────────────
+// STATE
+// ─────────────────────────────────────────────────────────────
+
+let prefs = {
+  palette: 'thermal', gain: 3.0, speed: 2, smoothing: 0.5,
+  freqLabels: false, autoGain: false, soundDetective: true, lowPower: false
+};
+let markers = [];
+
+function savePrefs() {
+  try { localStorage.setItem('spectrograph_prefs', JSON.stringify(prefs)); } catch(e) {}
+}
+function loadPrefs() {
+  try {
+    const s = localStorage.getItem('spectrograph_prefs');
+    if (s) Object.assign(prefs, JSON.parse(s));
+  } catch(e) {}
+}
+function saveMarkers() {
+  try { localStorage.setItem('spectrograph_markers', JSON.stringify(markers)); } catch(e) {}
+}
+function loadMarkers() {
+  try {
+    const s = localStorage.getItem('spectrograph_markers');
+    if (s) markers = JSON.parse(s);
+  } catch(e) {}
+}
+
+// ─────────────────────────────────────────────────────────────
+// AUDIO STATE
+// ─────────────────────────────────────────────────────────────
+
+let audioCtx, analyser, micStream, gainNode;
+let fftData, fftSize = 4096;
+let freqMap; // Uint16Array: pixel row -> FFT bin
+let sampleRate = 44100;
+
+// Rolling averages for detection
+let rollingRms = 0;
+let autoGainLevel = 1;
+
+// Sound detective state
+let detectorState = {
+  bird:  { consec: 0, lastTrigger: 0 },
+  dog:   { consec: 0, lastTrigger: 0 },
+  bass:  { consec: 0, lastTrigger: 0, sustained: 0 },
+  loud:  { consec: 0, lastTrigger: 0 }
+};
+let birdPrevEnergy = 0;
+
+// Vibe check
+let vibeState = 'Peaceful 🌿';
+let vibeLast = 0;
+let rmsHistory = new Float32Array(120); // ~2s at 60fps
+let rmsHistIdx = 0;
+let fluxPrev = null;
+let fluxHistory = new Float32Array(120);
+let fluxHistIdx = 0;
+
+// ─────────────────────────────────────────────────────────────
+// PARTICLES
+// ─────────────────────────────────────────────────────────────
+
+const MAX_PARTICLES = 200;
+let particles = [];
+
+function spawnParticles(emojis, count = 5) {
+  if (!prefs.soundDetective) return;
+  if (prefs.lowPower) return;
+  for (let i = 0; i < count; i++) {
+    if (particles.length >= MAX_PARTICLES) break;
+    const ow = overlayCanvas.width, oh = overlayCanvas.height;
+    particles.push({
+      x: Math.random() * ow,
+      y: -20 - Math.random() * 60,
+      vx: (Math.random() - 0.5) * 2,
+      vy: 1 + Math.random() * 3,
+      emoji: emojis[Math.floor(Math.random() * emojis.length)],
+      life: 1.0,
+      decay: 0.004 + Math.random() * 0.006,
+      size: 20 + Math.random() * 16
+    });
+  }
+}
+
+function updateParticles(dt) {
+  for (let i = particles.length - 1; i >= 0; i--) {
+    const p = particles[i];
+    p.x += p.vx * dt * 60;
+    p.vy += 0.08 * dt * 60; // gravity
+    p.vx += (Math.random() - 0.5) * 0.05; // drift
+    p.y += p.vy * dt * 60;
+    p.life -= p.decay * dt * 60;
+    const oh = overlayCanvas.height;
+    if (p.life <= 0 || p.y > oh + 40) {
+      // swap-and-pop O(1) removal
+      particles[i] = particles[particles.length - 1];
+      particles.pop();
+    }
+  }
+}
+
+// ─────────────────────────────────────────────────────────────
+// DOM REFS
+// ─────────────────────────────────────────────────────────────
+
+const introEl        = document.getElementById('intro');
+const startBtn       = document.getElementById('start-btn');
+const errorBox       = document.getElementById('error-box');
+const errorMsg       = document.getElementById('error-msg');
+const retryBtn       = document.getElementById('retry-btn');
+const loadingOverlay = document.getElementById('loading-overlay');
+const loadingCanvas  = document.getElementById('loading-canvas');
+const appEl          = document.getElementById('app');
+const specCanvas     = document.getElementById('spec-canvas');
+const overlayCanvas  = document.getElementById('overlay-canvas');
+const statusBar      = document.getElementById('status-bar');
+const freqLabelsEl   = document.getElementById('freq-labels');
+const gearBtn        = document.getElementById('gear-btn');
+const settingsPanel  = document.getElementById('settings-panel');
+const settingsBg     = document.getElementById('settings-backdrop');
+const closeSettings  = document.getElementById('close-settings');
+const bottomBar      = document.getElementById('bottom-bar');
+const detectiveBtn   = document.getElementById('detective-btn');
+const vibePill       = document.getElementById('vibe-pill');
+const snapshotBtn    = document.getElementById('snapshot-btn');
+const markerBtn      = document.getElementById('marker-btn');
+const gainSlider     = document.getElementById('gain-slider');
+const speedSlider    = document.getElementById('speed-slider');
+const smoothSlider   = document.getElementById('smooth-slider');
+const freqToggle     = document.getElementById('freq-toggle');
+const autogainToggle = document.getElementById('autogain-toggle');
+const lowpowerToggle = document.getElementById('lowpower-toggle');
+const amplitudeBar   = document.getElementById('amplitude-bar');
+const paletteBtns    = document.querySelectorAll('.palette-swatch');
+
+let specCtx, overlayCtx;
+let rafId = null;
+let lastFrameTime = 0;
+let scrollX = 0; // sub-pixel scroll accumulator
+
+// Marker scroll tracking
+let markerScrollOffset = 0; // pixels scrolled since app start
+let markerVisuals = []; // {x, label, color}
+
+// Status management
+let noAudioTimer = null;
+let noAudioShowing = false;
+
+// Zen mode
+let zenMode = false;
+let zenLongPressTimer = null;
+let zenHintShown = false;
+
+// Settings panel focus trap
+let settingsFocusables = [];
+
+// ─────────────────────────────────────────────────────────────
+// INTRO ANIMATION
+// ─────────────────────────────────────────────────────────────
+
+const introCanvas = document.getElementById('intro-canvas');
+const introCtx = introCanvas.getContext('2d');
+let introAnimId = null;
+let introT = 0;
+
+function animateIntro() {
+  const w = introCanvas.width = introCanvas.offsetWidth * devicePixelRatio;
+  const h = introCanvas.height = introCanvas.offsetHeight * devicePixelRatio;
+  introCtx.clearRect(0, 0, w, h);
+  introCtx.strokeStyle = '#7c3aed';
+  introCtx.lineWidth = 2;
+  introCtx.shadowColor = '#a78bfa';
+  introCtx.shadowBlur = 8;
+  introCtx.beginPath();
+  for (let x = 0; x < w; x++) {
+    const t = (x / w) * Math.PI * 6 - introT * 2;
+    const amp = 0.3 + 0.2 * Math.sin(introT * 0.5);
+    const y = h/2 + Math.sin(t) * h * amp * 0.35 + Math.sin(t*2.3 + 1) * h * 0.08;
+    x === 0 ? introCtx.moveTo(x, y) : introCtx.lineTo(x, y);
+  }
+  introCtx.stroke();
+  introT += 0.04;
+  introAnimId = requestAnimationFrame(animateIntro);
+}
+
+// ─────────────────────────────────────────────────────────────
+// LOADING ANIMATION
+// ─────────────────────────────────────────────────────────────
+
+let loadingAnimId = null;
+let loadingT = 0;
+let loadingAmp = 0.05;
+
+function animateLoading() {
+  const w = loadingCanvas.width = loadingCanvas.offsetWidth * devicePixelRatio;
+  const h = loadingCanvas.height = loadingCanvas.offsetHeight * devicePixelRatio;
+  const pal = PALETTES[prefs.palette];
+  loadingCtxDraw(w, h, pal);
+  loadingT += 0.06;
+  loadingAmp = Math.min(0.38, loadingAmp + 0.003);
+  loadingAnimId = requestAnimationFrame(animateLoading);
+}
+
+const loadingCtx = loadingCanvas.getContext('2d');
+function loadingCtxDraw(w, h, pal) {
+  loadingCtx.clearRect(0, 0, w, h);
+  // Draw a pulsing sine in palette color
+  const midIdx = 180;
+  const r = pal[midIdx*4], g = pal[midIdx*4+1], b = pal[midIdx*4+2];
+  loadingCtx.strokeStyle = `rgb(${r},${g},${b})`;
+  loadingCtx.lineWidth = 2.5;
+  loadingCtx.shadowColor = `rgb(${r},${g},${b})`;
+  loadingCtx.shadowBlur = 10;
+  loadingCtx.beginPath();
+  for (let x = 0; x < w; x++) {
+    const t = (x / w) * Math.PI * 8 - loadingT * 2;
+    const y = h/2 + Math.sin(t) * h * loadingAmp + Math.sin(t*1.7+0.5)*h*0.06;
+    x === 0 ? loadingCtx.moveTo(x, y) : loadingCtx.lineTo(x, y);
+  }
+  loadingCtx.stroke();
+}
+
+// ─────────────────────────────────────────────────────────────
+// AUDIO SETUP
+// ─────────────────────────────────────────────────────────────
+
+async function startAudio() {
+  try {
+    startBtn.disabled = true;
+    errorBox.style.display = 'none';
+
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false }, video: false });
+    micStream = stream;
+
+    // Show loading
+    loadingOverlay.style.display = 'flex';
+    loadingAmp = 0.05;
+    animateLoading();
+
+    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    sampleRate = audioCtx.sampleRate;
+
+    gainNode = audioCtx.createGain();
+    gainNode.gain.value = prefs.gain;
+
+    analyser = audioCtx.createAnalyser();
+    updateFFTSettings();
+
+    const source = audioCtx.createMediaStreamSource(stream);
+    source.connect(gainNode);
+    gainNode.connect(analyser);
+
+    fftData = new Uint8Array(analyser.frequencyBinCount);
+
+    // Brief delay for loading feel
+    await new Promise(r => setTimeout(r, 800));
+
+    cancelAnimationFrame(loadingAnimId);
+    loadingOverlay.style.display = 'none';
+    cancelAnimationFrame(introAnimId);
+    introEl.style.display = 'none';
+    showApp();
+
+  } catch(err) {
+    startBtn.disabled = false;
+    cancelAnimationFrame(loadingAnimId);
+    loadingOverlay.style.display = 'none';
+    showMicError(err);
+  }
+}
+
+function updateFFTSettings() {
+  fftSize = prefs.lowPower ? 2048 : 4096;
+  analyser.fftSize = fftSize;
+  analyser.smoothingTimeConstant = prefs.smoothing;
+  fftData = new Uint8Array(analyser.frequencyBinCount);
+  buildFreqMap();
+}
+
+function buildFreqMap() {
+  const h = specCanvas.height;
+  const minFreq = 20, maxFreq = sampleRate / 2;
+  freqMap = new Uint16Array(h);
+  for (let y = 0; y < h; y++) {
+    const pct = 1 - (y / h);
+    const freq = minFreq * Math.pow(maxFreq / minFreq, pct);
+    freqMap[y] = Math.min(Math.round(freq / (sampleRate / fftSize)), fftData.length - 1);
+  }
+}
+
+function showMicError(err) {
+  errorBox.style.display = 'block';
+  let msg = '';
+  const ua = navigator.userAgent;
+  if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
+    if (/iPhone|iPad/.test(ua)) {
+      msg = 'On iOS Safari: go to Settings → Safari → Microphone and allow access for this site. Then tap "Try Again".';
+    } else if (/Chrome/.test(ua)) {
+      msg = 'Click the camera/mic icon in the address bar and select "Allow", then tap "Try Again".';
+    } else if (/Firefox/.test(ua)) {
+      msg = 'Click the microphone icon near the address bar and choose "Allow". Then tap "Try Again".';
+    } else {
+      msg = 'Microphone permission was denied. Please allow access in your browser settings, then tap "Try Again".';
+    }
+  } else if (err.name === 'NotFoundError') {
+    msg = 'No microphone found. Please connect a microphone and try again.';
+  } else {
+    msg = `Could not access microphone: ${err.message}. Please check your browser settings.`;
+  }
+  errorMsg.textContent = msg;
+}
+
+// ─────────────────────────────────────────────────────────────
+// SHOW APP
+// ─────────────────────────────────────────────────────────────
+
+function showApp() {
+  appEl.style.display = 'block';
+  resizeCanvases();
+  applyPrefsToUI();
+  startRenderLoop();
+  setupNoAudioWatcher();
+
+  // First-time zen hint
+  if (!localStorage.getItem('zen_hint_shown')) {
+    const hint = document.createElement('div');
+    hint.className = 'zen-hint';
+    hint.id = 'zen-hint';
+    hint.textContent = 'Long-press anywhere to enter Zen Mode';
+    hint.setAttribute('aria-hidden', 'true');
+    document.body.appendChild(hint);
+    setTimeout(() => { hint.style.opacity = '0'; setTimeout(() => hint.remove(), 600); }, 4000);
+    localStorage.setItem('zen_hint_shown', '1');
+  }
+
+  // Restore markers as visuals
+  const w = specCanvas.width;
+  markerVisuals = markers.map((m, i) => ({
+    x: w - (markers.length - i) * 60,
+    label: formatTime(new Date(m.timestamp)),
+    color: '#f97316'
+  }));
+}
+
+// ─────────────────────────────────────────────────────────────
+// CANVAS RESIZE
+// ─────────────────────────────────────────────────────────────
+
+function resizeCanvases() {
+  const dpr = devicePixelRatio || 1;
+  const w = window.innerWidth * dpr;
+  const h = window.innerHeight * dpr;
+
+  specCanvas.width = w; specCanvas.height = h;
+  overlayCanvas.width = w; overlayCanvas.height = h;
+  specCanvas.style.width = overlayCanvas.style.width = '100%';
+  specCanvas.style.height = overlayCanvas.style.height = '100%';
+
+  specCtx = specCanvas.getContext('2d', { willReadFrequently: true });
+  overlayCtx = overlayCanvas.getContext('2d');
+
+  if (analyser) buildFreqMap();
+  updateFreqLabels();
+  updateAriaLabel(0);
+}
+
+window.addEventListener('resize', () => {
+  resizeCanvases();
+});
+
+// ─────────────────────────────────────────────────────────────
+// FREQUENCY LABELS
+// ─────────────────────────────────────────────────────────────
+
+function updateFreqLabels() {
+  freqLabelsEl.innerHTML = '';
+  if (!prefs.freqLabels) return;
+  const h = specCanvas.height;
+  const minFreq = 20, maxFreq = sampleRate / 2;
+  FREQ_TICKS.forEach(freq => {
+    if (freq > maxFreq) return;
+    const pct = Math.log(freq / minFreq) / Math.log(maxFreq / minFreq);
+    const y = (1 - pct) * 100;
+    if (y < 1 || y > 99) return;
+    const div = document.createElement('div');
+    div.className = 'freq-label';
+    div.style.top = y + '%';
+    div.textContent = freq >= 1000 ? (freq/1000) + 'k' : freq + 'Hz';
+    freqLabelsEl.appendChild(div);
+  });
+}
+
+// ─────────────────────────────────────────────────────────────
+// RENDER LOOP
+// ─────────────────────────────────────────────────────────────
+
+function startRenderLoop() {
+  if (rafId) cancelAnimationFrame(rafId);
+  lastFrameTime = performance.now();
+  rafId = requestAnimationFrame(renderFrame);
+}
+
+function renderFrame(now) {
+  const targetFps = prefs.lowPower ? 30 : 60;
+  const targetInterval = 1000 / targetFps;
+  const dt = (now - lastFrameTime) / 1000;
+
+  if (now - lastFrameTime < targetInterval - 1) {
+    rafId = requestAnimationFrame(renderFrame);
+    return;
+  }
+  lastFrameTime = now;
+
+  analyser.getByteFrequencyData(fftData);
+
+  const w = specCanvas.width;
+  const h = specCanvas.height;
+  const pixelsPerFrame = prefs.speed;
+
+  // Auto-gain
+  const rms = computeRms();
+  rmsHistory[rmsHistIdx++ % rmsHistory.length] = rms;
+  if (prefs.autoGain && rms > 0) {
+    rollingRms = rollingRms * 0.98 + rms * 0.02;
+    if (rollingRms > 0.01) {
+      autoGainLevel = 0.15 / rollingRms;
+      gainNode.gain.value = Math.min(20, Math.max(0.5, autoGainLevel));
+    }
+  } else {
+    gainNode.gain.value = prefs.gain;
+  }
+
+  // Amplitude indicator
+  amplitudeBar.style.width = Math.min(100, rms * 400) + '%';
+
+  // ARIA label
+  updateAriaLabel(rms);
+
+  // Vibe check
+  updateVibe(rms, now);
+
+  // Sound detective
+  if (prefs.soundDetective) detectSounds(now);
+
+  // Draw spectrograph strip
+  drawStrip(w, h, pixelsPerFrame);
+
+  // Draw overlay (particles + markers)
+  drawOverlay(w, h, dt);
+
+  // Track scroll for markers
+  markerScrollOffset += pixelsPerFrame;
+
+  // No audio watcher
+  checkNoAudio(rms, now);
+
+  rafId = requestAnimationFrame(renderFrame);
+}
+
+function computeRms() {
+  // Efficient spot-check
+  const len = fftData.length;
+  let sum = 0;
+  const checks = [0, Math.floor(len*0.05), Math.floor(len*0.1),
+                   Math.floor(len*0.25), Math.floor(len*0.5), Math.floor(len*0.75)];
+  for (const i of checks) { const v = fftData[i]/255; sum += v*v; }
+  return Math.sqrt(sum / checks.length);
+}
+
+function drawStrip(w, h, pixels) {
+  const pal = PALETTES[prefs.palette];
+  const imageData = specCtx.getImageData(0, 0, w, h);
+  const data = imageData.data;
+
+  // Shift left by `pixels`
+  const bytesPerRow = w * 4;
+  const shiftBytes = pixels * 4;
+  for (let y = 0; y < h; y++) {
+    const rowStart = y * bytesPerRow;
+    data.copyWithin(rowStart, rowStart + shiftBytes, rowStart + bytesPerRow);
+  }
+
+  // Draw new column(s) on right edge
+  for (let col = w - pixels; col < w; col++) {
+    for (let y = 0; y < h; y++) {
+      const bin = freqMap ? freqMap[y] : Math.floor(y / h * fftData.length);
+      const val = Math.min(255, Math.floor(fftData[bin]));
+      const pi = (y * w + col) * 4;
+      data[pi]   = pal[val*4];
+      data[pi+1] = pal[val*4+1];
+      data[pi+2] = pal[val*4+2];
+      data[pi+3] = 255;
+    }
+  }
+
+  specCtx.putImageData(imageData, 0, 0);
+}
+
+function drawOverlay(w, h, dt) {
+  overlayCtx.clearRect(0, 0, w, h);
+
+  // Draw time markers
+  const dpr = devicePixelRatio || 1;
+  for (const mv of markerVisuals) {
+    mv.x -= prefs.speed;
+    if (mv.x < 0) continue;
+    overlayCtx.strokeStyle = mv.color;
+    overlayCtx.lineWidth = 1.5 * dpr;
+    overlayCtx.setLineDash([4*dpr, 4*dpr]);
+    overlayCtx.beginPath();
+    overlayCtx.moveTo(mv.x, 0);
+    overlayCtx.lineTo(mv.x, h - (64 + 20) * dpr);
+    overlayCtx.stroke();
+    overlayCtx.setLineDash([]);
+
+    overlayCtx.fillStyle = mv.color;
+    overlayCtx.font = `bold ${11*dpr}px -apple-system, sans-serif`;
+    overlayCtx.textAlign = 'left';
+    const tx = Math.min(mv.x + 4*dpr, w - 80*dpr);
+    overlayCtx.fillText(mv.label, tx, 18*dpr);
+  }
+  // Remove off-screen markers
+  markerVisuals = markerVisuals.filter(mv => mv.x > -50);
+
+  // Draw particles
+  if (!prefs.lowPower) {
+    updateParticles(dt);
+    for (const p of particles) {
+      overlayCtx.globalAlpha = p.life * 0.9;
+      overlayCtx.font = `${p.size * dpr}px serif`;
+      overlayCtx.textAlign = 'center';
+      overlayCtx.fillText(p.emoji, p.x, p.y);
+    }
+    overlayCtx.globalAlpha = 1;
+  }
+}
+
+// ─────────────────────────────────────────────────────────────
+// SOUND DETECTION
+// ─────────────────────────────────────────────────────────────
+
+function getBandEnergy(minHz, maxHz) {
+  const binWidth = sampleRate / fftSize;
+  const lo = Math.max(0, Math.floor(minHz / binWidth));
+  const hi = Math.min(fftData.length - 1, Math.ceil(maxHz / binWidth));
+  let sum = 0;
+  for (let i = lo; i <= hi; i++) sum += fftData[i];
+  return sum / Math.max(1, hi - lo + 1);
+}
+
+function getSpectralCentroid() {
+  let num = 0, den = 0;
+  const binWidth = sampleRate / fftSize;
+  for (let i = 0; i < fftData.length; i++) {
+    num += i * binWidth * fftData[i];
+    den += fftData[i];
+  }
+  return den > 0 ? num / den : 0;
+}
+
+function detectSounds(now) {
+  const ds = detectorState;
+  const COOLDOWN = 3000;
+
+  // Bird: 2-8kHz, centroid > 3kHz, transient onset
+  const birdEnergy = getBandEnergy(2000, 8000);
+  const centroid = getSpectralCentroid();
+  const birdTransient = birdPrevEnergy > 10 && birdEnergy > birdPrevEnergy * 2;
+  birdPrevEnergy = birdPrevEnergy * 0.7 + birdEnergy * 0.3;
+  const birdMatch = centroid > 3000 && birdTransient && birdEnergy > 30;
+  if (birdMatch) ds.bird.consec++; else ds.bird.consec = 0;
+  if (ds.bird.consec >= 2 && now - ds.bird.lastTrigger > COOLDOWN) {
+    ds.bird.lastTrigger = now; ds.bird.consec = 0;
+    spawnParticles(['🐦','🐤','🦜'], 6);
+  }
+
+  // Dog: 300-2000Hz, burst > 3x ambient
+  const dogEnergy = getBandEnergy(300, 2000);
+  const ambient = rollingRms * 255 * 0.5 + 15;
+  const dogMatch = dogEnergy > ambient * 3 && dogEnergy > 40;
+  if (dogMatch) ds.dog.consec++; else ds.dog.consec = 0;
+  if (ds.dog.consec >= 2 && now - ds.dog.lastTrigger > COOLDOWN) {
+    ds.dog.lastTrigger = now; ds.dog.consec = 0;
+    spawnParticles(['🐕','🐶','🦴'], 5);
+  }
+
+  // Bass/music: 40-250Hz, sustained > 2s
+  const bassEnergy = getBandEnergy(40, 250);
+  const bassMatch = bassEnergy > ambient * 1.5 && bassEnergy > 20;
+  if (bassMatch) ds.bass.sustained += 16; else ds.bass.sustained = Math.max(0, ds.bass.sustained - 50);
+  if (ds.bass.sustained > 2000 && now - ds.bass.lastTrigger > COOLDOWN) {
+    ds.bass.lastTrigger = now; ds.bass.sustained = 0;
+    spawnParticles(['🎵','🎶','🔊'], 8);
+  }
+
+  // Loud transient: broadband spike > 4x
+  const broadEnergy = getBandEnergy(100, 8000);
+  const loudMatch = broadEnergy > ambient * 4 && broadEnergy > 80;
+  if (loudMatch) ds.loud.consec++; else ds.loud.consec = 0;
+  if (ds.loud.consec >= 2 && now - ds.loud.lastTrigger > COOLDOWN) {
+    ds.loud.lastTrigger = now; ds.loud.consec = 0;
+    spawnParticles(['👏','🎉','✨'], 10);
+  }
+}
+
+// ─────────────────────────────────────────────────────────────
+// VIBE CHECK
+// ─────────────────────────────────────────────────────────────
+
+function updateVibe(rms, now) {
+  if (now - vibeLast < 5000) return;
+
+  // Spectral flux
+  const flux = computeFlux();
+  fluxHistory[fluxHistIdx++ % fluxHistory.length] = flux;
+
+  const avgRms = avgOf(rmsHistory);
+  const rmsVar = varianceOf(rmsHistory);
+  const avgFlux = avgOf(fluxHistory);
+
+  let newVibe;
+  if (avgRms < 0.03 && avgFlux < 0.02) {
+    newVibe = 'Peaceful 🌿';
+  } else if (rmsVar > 0.002) {
+    newVibe = 'Lively 🎉';
+  } else if (avgFlux < 0.015 && avgRms > 0.02) {
+    newVibe = 'Musical 🎵';
+  } else if (avgRms > 0.08 && avgFlux > 0.03) {
+    newVibe = 'Chaotic 🌪️';
+  } else {
+    newVibe = 'Peaceful 🌿';
+  }
+
+  if (newVibe !== vibeState) {
+    vibeState = newVibe;
+    vibePill.textContent = vibeState;
+    vibeLast = now;
+  }
+}
+
+let fluxPrevData = null;
+function computeFlux() {
+  if (!fluxPrevData) { fluxPrevData = new Float32Array(fftData.length); return 0; }
+  let flux = 0;
+  const step = Math.floor(fftData.length / 32);
+  for (let i = 0; i < fftData.length; i += step) {
+    const diff = (fftData[i]/255) - fluxPrevData[i];
+    if (diff > 0) flux += diff;
+  }
+  for (let i = 0; i < fftData.length; i++) fluxPrevData[i] = fftData[i]/255;
+  return flux / 32;
+}
+
+function avgOf(arr) {
+  let s = 0; for (const v of arr) s += v; return s / arr.length;
+}
+function varianceOf(arr) {
+  const m = avgOf(arr); let v = 0;
+  for (const x of arr) v += (x-m)*(x-m);
+  return v / arr.length;
+}
+
+// ─────────────────────────────────────────────────────────────
+// NO AUDIO WATCHER
+// ─────────────────────────────────────────────────────────────
+
+let lastAudioTime = Date.now();
+function setupNoAudioWatcher() { lastAudioTime = Date.now(); }
+
+function checkNoAudio(rms, now) {
+  if (rms > 0.005) {
+    lastAudioTime = now;
+    if (noAudioShowing) {
+      noAudioShowing = false;
+      statusBar.style.display = 'none';
+    }
+  } else if (now - lastAudioTime > 30000 && !noAudioShowing) {
+    noAudioShowing = true;
+    statusBar.textContent = 'No audio detected — is your mic on?';
+    statusBar.style.display = 'block';
+  }
+}
+
+// ─────────────────────────────────────────────────────────────
+// ARIA
+// ─────────────────────────────────────────────────────────────
+
+function updateAriaLabel(rms) {
+  let level;
+  if (rms < 0.02) level = 'minimal';
+  else if (rms < 0.06) level = 'low';
+  else if (rms < 0.15) level = 'moderate';
+  else level = 'high';
+  specCanvas.setAttribute('aria-label', `Live audio spectrograph showing ${level} activity`);
+}
+
+// ─────────────────────────────────────────────────────────────
+// SNAPSHOT
+// ─────────────────────────────────────────────────────────────
+
+function takeSnapshot() {
+  const dpr = devicePixelRatio || 1;
+  const w = specCanvas.width, h = specCanvas.height;
+  const tmp = document.createElement('canvas');
+  tmp.width = w; tmp.height = h;
+  const ctx = tmp.getContext('2d');
+
+  // Draw spectrograph
+  ctx.drawImage(specCanvas, 0, 0);
+  // Draw overlay (markers etc)
+  ctx.drawImage(overlayCanvas, 0, 0);
+
+  // Watermark
+  const ts = new Date().toLocaleString();
+  const pad = 12 * dpr;
+  ctx.font = `bold ${13*dpr}px -apple-system, sans-serif`;
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'bottom';
+  const text1 = 'Silly Spectrograph';
+  const text2 = ts;
+  const maxW = Math.max(ctx.measureText(text1).width, ctx.measureText(text2).width);
+  const bh = 44 * dpr;
+  ctx.fillStyle = 'rgba(0,0,0,0.6)';
+  ctx.fillRect(pad - 6*dpr, h - bh - pad, maxW + 20*dpr, bh + 8*dpr);
+  ctx.fillStyle = '#e2e8f0';
+  ctx.fillText(text1, pad, h - pad - 16*dpr);
+  ctx.font = `${11*dpr}px -apple-system, sans-serif`;
+  ctx.fillStyle = '#94a3b8';
+  ctx.fillText(text2, pad, h - pad);
+
+  const url = tmp.toDataURL('image/png');
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `spectrograph-${Date.now()}.png`;
+  a.click();
+}
+
+// ─────────────────────────────────────────────────────────────
+// TIME MARKERS
+// ─────────────────────────────────────────────────────────────
+
+function dropMarker() {
+  const now = new Date();
+  const label = formatTime(now);
+  const m = { timestamp: now.toISOString(), label };
+  markers.push(m);
+  saveMarkers();
+
+  const w = specCanvas.width;
+  markerVisuals.push({ x: w - prefs.speed, label, color: '#f97316' });
+}
+
+function formatTime(d) {
+  if (typeof d === 'string') d = new Date(d);
+  return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+}
+
+// ─────────────────────────────────────────────────────────────
+// SETTINGS PANEL
+// ─────────────────────────────────────────────────────────────
+
+function openSettings() {
+  settingsPanel.classList.add('open');
+  settingsBg.style.display = 'block';
+  settingsBg.setAttribute('aria-hidden', 'false');
+  settingsPanel.removeAttribute('aria-hidden');
+  settingsFocusables = Array.from(settingsPanel.querySelectorAll('button, input, [tabindex]'));
+  if (settingsFocusables.length) settingsFocusables[0].focus();
+}
+
+function closeSettingsFn() {
+  settingsPanel.classList.remove('open');
+  settingsBg.style.display = 'none';
+  settingsBg.setAttribute('aria-hidden', 'true');
+  settingsPanel.setAttribute('aria-hidden', 'true');
+  gearBtn.focus();
+}
+
+settingsPanel.addEventListener('keydown', e => {
+  if (e.key === 'Escape') { closeSettingsFn(); return; }
+  if (e.key === 'Tab') {
+    const focusables = Array.from(settingsPanel.querySelectorAll('button, input, [tabindex]:not([tabindex="-1"])'));
+    if (!focusables.length) return;
+    const first = focusables[0], last = focusables[focusables.length - 1];
+    if (e.shiftKey && document.activeElement === first) {
+      e.preventDefault(); last.focus();
+    } else if (!e.shiftKey && document.activeElement === last) {
+      e.preventDefault(); first.focus();
+    }
+  }
+});
+
+gearBtn.addEventListener('click', openSettings);
+closeSettings.addEventListener('click', closeSettingsFn);
+settingsBg.addEventListener('click', closeSettingsFn);
+
+// Palette selection
+paletteBtns.forEach(btn => {
+  btn.addEventListener('click', () => {
+    paletteBtns.forEach(b => { b.classList.remove('selected'); b.setAttribute('aria-checked', 'false'); });
+    btn.classList.add('selected');
+    btn.setAttribute('aria-checked', 'true');
+    prefs.palette = btn.dataset.palette;
+    savePrefs();
+  });
+  btn.addEventListener('keydown', e => {
+    if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); btn.click(); }
+  });
+});
+
+// Sliders
+gainSlider.addEventListener('input', () => {
+  prefs.gain = parseFloat(gainSlider.value);
+  if (!prefs.autoGain && gainNode) gainNode.gain.value = prefs.gain;
+  savePrefs();
+});
+speedSlider.addEventListener('input', () => {
+  prefs.speed = parseInt(speedSlider.value);
+  savePrefs();
+});
+smoothSlider.addEventListener('input', () => {
+  prefs.smoothing = parseFloat(smoothSlider.value);
+  if (analyser) analyser.smoothingTimeConstant = prefs.smoothing;
+  savePrefs();
+});
+
+// Toggles
+freqToggle.addEventListener('change', () => {
+  prefs.freqLabels = freqToggle.checked;
+  updateFreqLabels();
+  savePrefs();
+});
+autogainToggle.addEventListener('change', () => {
+  prefs.autoGain = autogainToggle.checked;
+  if (!prefs.autoGain && gainNode) gainNode.gain.value = prefs.gain;
+  savePrefs();
+});
+lowpowerToggle.addEventListener('change', () => {
+  prefs.lowPower = lowpowerToggle.checked;
+  if (analyser) updateFFTSettings();
+  savePrefs();
+});
+
+// Sound detective toggle
+detectiveBtn.addEventListener('click', () => {
+  prefs.soundDetective = !prefs.soundDetective;
+  detectiveBtn.classList.toggle('active', prefs.soundDetective);
+  detectiveBtn.setAttribute('aria-pressed', prefs.soundDetective ? 'true' : 'false');
+  if (!prefs.soundDetective) particles.length = 0;
+  savePrefs();
+});
+
+// Snapshot
+snapshotBtn.addEventListener('click', takeSnapshot);
+
+// Marker
+markerBtn.addEventListener('click', dropMarker);
+
+// Start / retry
+startBtn.addEventListener('click', startAudio);
+retryBtn.addEventListener('click', startAudio);
+
+// ─────────────────────────────────────────────────────────────
+// ZEN MODE
+// ─────────────────────────────────────────────────────────────
+
+function toggleZen() {
+  zenMode = !zenMode;
+  const els = [bottomBar, gearBtn, freqLabelsEl];
+  els.forEach(el => el.classList.toggle('zen-hidden', zenMode));
+}
+
+let zenTouchStart = 0;
+function startLongPress(e) {
+  // Only trigger on canvas, not on buttons
+  if (e.target !== specCanvas && e.target !== overlayCanvas) return;
+  zenTouchStart = Date.now();
+  zenLongPressTimer = setTimeout(() => { toggleZen(); }, 700);
+}
+function cancelLongPress() {
+  clearTimeout(zenLongPressTimer);
+}
+
+document.addEventListener('mousedown', startLongPress);
+document.addEventListener('mouseup', cancelLongPress);
+document.addEventListener('touchstart', startLongPress, { passive: true });
+document.addEventListener('touchend', cancelLongPress, { passive: true });
+document.addEventListener('touchmove', cancelLongPress, { passive: true });
+
+// Spacebar to pause/resume
+document.addEventListener('keydown', e => {
+  if (e.code === 'Space' && document.activeElement === document.body) {
+    e.preventDefault();
+    if (rafId) {
+      cancelAnimationFrame(rafId);
+      rafId = null;
+    } else {
+      startRenderLoop();
+    }
+  }
+});
+
+// ─────────────────────────────────────────────────────────────
+// PAGE VISIBILITY
+// ─────────────────────────────────────────────────────────────
+
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) {
+    if (rafId) { cancelAnimationFrame(rafId); rafId = null; }
+    if (audioCtx && audioCtx.state === 'running') audioCtx.suspend();
+  } else {
+    if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume();
+    if (appEl.style.display === 'block' && !rafId) startRenderLoop();
+  }
+});
+
+// ─────────────────────────────────────────────────────────────
+// APPLY PREFS TO UI
+// ─────────────────────────────────────────────────────────────
+
+function applyPrefsToUI() {
+  gainSlider.value      = prefs.gain;
+  speedSlider.value     = prefs.speed;
+  smoothSlider.value    = prefs.smoothing;
+  freqToggle.checked    = prefs.freqLabels;
+  autogainToggle.checked = prefs.autoGain;
+  lowpowerToggle.checked = prefs.lowPower;
+  detectiveBtn.classList.toggle('active', prefs.soundDetective);
+  detectiveBtn.setAttribute('aria-pressed', prefs.soundDetective ? 'true' : 'false');
+
+  paletteBtns.forEach(btn => {
+    const match = btn.dataset.palette === prefs.palette;
+    btn.classList.toggle('selected', match);
+    btn.setAttribute('aria-checked', match ? 'true' : 'false');
+  });
+  updateFreqLabels();
+  vibePill.textContent = vibeState;
+}
+
+// ─────────────────────────────────────────────────────────────
+// INIT
+// ─────────────────────────────────────────────────────────────
+
+loadPrefs();
+loadMarkers();
+
+// Check browser support
+if (!navigator.mediaDevices || !window.AudioContext && !window.webkitAudioContext) {
+  startBtn.disabled = true;
+  errorBox.style.display = 'block';
+  errorMsg.textContent = 'Web Audio API not supported. Please use Chrome, Edge, or Safari.';
+}
+
+// Start intro animation
+animateIntro();
+
+</script>
+</body>
+</html>
