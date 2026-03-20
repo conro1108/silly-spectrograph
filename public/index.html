@@ -501,7 +501,7 @@ const FREQ_TICKS = [20,50,100,200,500,1000,2000,5000,10000,20000];
 // ─────────────────────────────────────────────────────────────
 
 let prefs = {
-  palette: 'thermal', gain: 3.0, speed: 2, smoothing: 0.5,
+  palette: 'thermal', gain: 3.0, speed: 2, smoothing: 0.75,
   freqLabels: false, autoGain: false, soundDetective: true, lowPower: false
 };
 let markers = [];
@@ -531,7 +531,7 @@ function loadMarkers() {
 
 let audioCtx, analyser, micStream, gainNode;
 let fftData, fftSize = 4096;
-let freqMap; // Uint16Array: pixel row -> FFT bin
+let freqMap; // Float32Array: pixel row -> fractional FFT bin (for interpolation)
 let sampleRate = 44100;
 
 // Rolling averages for detection
@@ -778,12 +778,14 @@ function updateFFTSettings() {
 
 function buildFreqMap() {
   const h = specCanvas.height;
-  const minFreq = 20, maxFreq = sampleRate / 2;
-  freqMap = new Uint16Array(h);
+  const minFreq = 50, maxFreq = sampleRate / 2;
+  const binWidth = sampleRate / fftSize;
+  // Store fractional bin indices for interpolation (as Float32Array)
+  freqMap = new Float32Array(h);
   for (let y = 0; y < h; y++) {
     const pct = 1 - (y / h);
     const freq = minFreq * Math.pow(maxFreq / minFreq, pct);
-    freqMap[y] = Math.min(Math.round(freq / (sampleRate / fftSize)), fftData.length - 1);
+    freqMap[y] = Math.min(freq / binWidth, fftData.length - 1);
   }
 }
 
@@ -966,6 +968,9 @@ function computeRms() {
   return Math.sqrt(sum / checks.length);
 }
 
+// Noise floor: suppress low-level mic noise (especially at low frequencies)
+const NOISE_FLOOR = 8; // values below this are treated as silence
+
 function drawStrip(w, h, pixels) {
   const pal = PALETTES[prefs.palette];
 
@@ -975,10 +980,24 @@ function drawStrip(w, h, pixels) {
   // Draw new column(s) on right edge using a small ImageData
   const strip = specCtx.createImageData(pixels, h);
   const data = strip.data;
+  const fLen = fftData.length;
   for (let col = 0; col < pixels; col++) {
     for (let y = 0; y < h; y++) {
-      const bin = freqMap ? freqMap[y] : Math.floor(y / h * fftData.length);
-      const val = Math.min(255, Math.floor(fftData[bin]));
+      let val;
+      if (freqMap) {
+        // Interpolate between adjacent FFT bins for smooth gradients
+        const fBin = freqMap[y];
+        const lo = Math.floor(fBin);
+        const hi = Math.min(lo + 1, fLen - 1);
+        const frac = fBin - lo;
+        val = fftData[lo] * (1 - frac) + fftData[hi] * frac;
+      } else {
+        val = fftData[Math.floor(y / h * fLen)];
+      }
+      // Apply noise floor
+      val = Math.max(0, val - NOISE_FLOOR);
+      // Rescale to full range after noise floor subtraction
+      val = Math.min(255, Math.floor(val * (255 / (255 - NOISE_FLOOR))));
       const pi = (y * pixels + col) * 4;
       data[pi]   = pal[val*4];
       data[pi+1] = pal[val*4+1];
