@@ -1,0 +1,510 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Silly Spectrogram</title>
+    <style>
+        :root {
+            --bg-color: #000000;
+            --control-bg: rgba(20, 20, 20, 0.85);
+            --text-color: #e2e8f0;
+            --accent-color: #00ff9d;
+        }
+
+        body {
+            margin: 0;
+            padding: 0;
+            background-color: var(--bg-color);
+            color: var(--text-color);
+            font-family: monospace;
+            overflow: hidden;
+            height: 100vh;
+            width: 100vw;
+            display: flex;
+            flex-direction: column;
+        }
+
+        canvas {
+            display: block;
+            width: 100%;
+            height: 100%;
+            touch-action: none;
+            position: absolute;
+            top: 0;
+            left: 0;
+        }
+
+        /* Layering: Spectrogram (0), Confetti (1), UI (10) */
+        #spectrogram { z-index: 0; }
+        #confetti-layer { z-index: 1; pointer-events: none; }
+
+        /* Status is at the bottom left */
+        #status-indicator {
+            position: absolute;
+            bottom: 10px;
+            left: 10px;
+            font-size: 11px;
+            color: #00ff9d;
+            background: rgba(0,0,0,0.6);
+            padding: 4px 8px;
+            border-radius: 4px;
+            pointer-events: none;
+            z-index: 50;
+            transition: color 0.3s ease;
+        }
+
+        /* Overlay Controls - TOP */
+        #controls-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            background: var(--control-bg);
+            border-bottom: 1px solid #444;
+            padding: 10px 16px;
+            box-sizing: border-box;
+            backdrop-filter: blur(4px);
+            z-index: 10;
+        }
+
+        .control-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 8px;
+            max-width: 800px;
+            margin-left: auto;
+            margin-right: auto;
+        }
+        
+        .control-row:last-child { margin-bottom: 0; }
+
+        button {
+            background-color: var(--accent-color);
+            color: #000;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 4px;
+            font-weight: bold;
+            font-size: 14px;
+            cursor: pointer;
+            text-transform: uppercase;
+        }
+
+        button.secondary {
+            background-color: transparent;
+            border: 1px solid var(--accent-color);
+            color: var(--accent-color);
+            padding: 6px 12px;
+            font-size: 12px;
+        }
+
+        .slider-group {
+            display: flex;
+            flex-direction: column;
+            flex: 1;
+            margin: 0 10px;
+        }
+
+        .slider-group label {
+            font-size: 11px;
+            margin-bottom: 4px;
+            color: #aaa;
+            display: flex;
+            justify-content: space-between;
+        }
+
+        input[type=range] {
+            width: 100%;
+            cursor: pointer;
+            margin: 0;
+        }
+
+        #intro {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            background: var(--bg-color);
+            z-index: 20;
+            text-align: center;
+            padding: 20px;
+        }
+
+        h1 { margin-bottom: 10px; color: #fff; font-size: 1.5rem; }
+        p { color: #888; margin-bottom: 30px; font-size: 0.9rem; }
+
+        .hidden-el { display: none !important; }
+        
+        #recognition-status {
+            font-size: 10px;
+            color: #aaa;
+            margin-top: 5px;
+        }
+    </style>
+</head>
+<body>
+
+    <div id="intro">
+        <h1>Silly Spectrogram</h1>
+        <p>Visualizes audio. Say "penis", "boobs", "ass", "shit", or "fart".</p>
+        <button id="start-btn">Start Listening</button>
+        <div id="recognition-status">Requires Chrome/Edge/Safari</div>
+    </div>
+
+    <div id="status-indicator" class="hidden-el">Waiting...</div>
+    
+    <!-- Main visualizer -->
+    <canvas id="spectrogram"></canvas>
+    <!-- Overlay for emojis -->
+    <canvas id="confetti-layer"></canvas>
+
+    <div id="controls-overlay" class="hidden-el">
+        <div class="control-row">
+            <button id="pause-btn" class="secondary">Pause</button>
+            <button id="contrast-btn" class="secondary">Color: Normal</button>
+        </div>
+        <div class="control-row">
+            <div class="slider-group">
+                <label>Gain <span id="gain-val">3.0</span></label>
+                <input type="range" id="gain-slider" min="1.0" max="10.0" step="0.5" value="3.0">
+            </div>
+            <div class="slider-group">
+                <label>Speed <span id="speed-val">2</span></label>
+                <input type="range" id="speed-slider" min="1" max="6" step="1" value="2">
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // --- State ---
+        let audioCtx, analyser, microphone, gainNode;
+        let isRunning = false;
+        let isPaused = false;
+        let highContrast = false;
+        let silenceFrames = 0;
+        
+        // Speech Recognition State
+        let recognition;
+        
+        // Word Mappings
+        const WORD_MAP = {
+            'penis': ['🍆', '🌭', '🍌', '🥖'],
+            'wiener': ['🍆', '🌭', '🍌', '🥖'],
+            'boobs': ['🍒', '🍈', '🥥', '🍊'],
+            'tits': ['🍒', '🍈', '🥥', '🍊'],
+            'ass': ['🍑', '🍩', '🥯'],
+            'booty': ['🍑', '🍩', '🥯'],
+            'shit': ['💩', '🚽', '🧻'],
+            'poop': ['💩', '🚽', '🧻'],
+            'crap': ['💩', '🚽', '🧻'],
+            'fart': ['💨', '😶‍🌫️', '🌬️']
+        };
+
+        // Confetti State
+        let particles = [];
+
+        // Canvas
+        const canvas = document.getElementById('spectrogram');
+        const ctx = canvas.getContext('2d', { alpha: false });
+        
+        const confettiCanvas = document.getElementById('confetti-layer');
+        const confettiCtx = confettiCanvas.getContext('2d');
+        
+        // DOM
+        const startBtn = document.getElementById('start-btn');
+        const introDiv = document.getElementById('intro');
+        const controlsDiv = document.getElementById('controls-overlay');
+        const statusInd = document.getElementById('status-indicator');
+        const gainSlider = document.getElementById('gain-slider');
+        const speedSlider = document.getElementById('speed-slider');
+        const pauseBtn = document.getElementById('pause-btn');
+        const contrastBtn = document.getElementById('contrast-btn');
+
+        // Settings
+        let scrollSpeed = 2;
+        let inputGain = 3.0; 
+
+        // --- Palette Generation ---
+        const palette = new Uint8ClampedArray(256 * 4);
+        const paletteContrast = new Uint8ClampedArray(256 * 4);
+
+        function generatePalettes() {
+            for (let i = 0; i < 256; i++) {
+                const t = i / 255;
+                const idx = i * 4;
+                
+                // Normal
+                palette[idx] = Math.min(255, (t > 0.3 ? (t - 0.3) * 3 : 0) * 255);
+                palette[idx+1] = Math.min(255, (t > 0.6 ? (t - 0.6) * 4 : 0) * 255);
+                palette[idx+2] = Math.min(255, (t < 0.5 ? t * 2 : 1.0 - (t-0.5)*2) * 255) + 10; 
+                palette[idx+3] = 255;
+
+                // Matrix
+                paletteContrast[idx] = Math.floor(t * 30); 
+                paletteContrast[idx+1] = Math.floor(t * 255); 
+                paletteContrast[idx+2] = Math.floor(t * 30); 
+                paletteContrast[idx+3] = 255;
+            }
+        }
+        generatePalettes();
+
+        // --- Layout ---
+        function resize() {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+            confettiCanvas.width = window.innerWidth;
+            confettiCanvas.height = window.innerHeight;
+            
+            ctx.fillStyle = '#000000';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+        }
+        window.addEventListener('resize', resize);
+        resize();
+
+        // --- Speech Recognition Setup ---
+        function initSpeechRecognition() {
+            const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+            
+            if (!SpeechRecognition) {
+                console.log("Speech Recognition API not supported in this browser.");
+                return;
+            }
+
+            recognition = new SpeechRecognition();
+            recognition.continuous = true; 
+            recognition.interimResults = true; 
+            recognition.lang = 'en-US';
+
+            recognition.onresult = (event) => {
+                for (let i = event.resultIndex; i < event.results.length; ++i) {
+                    if (event.results[i].isFinal || event.results[i][0].confidence > 0.6) {
+                        const transcript = event.results[i][0].transcript.toLowerCase().trim();
+                        // Split into words to check individually or check phrases
+                        const words = transcript.split(/\s+/);
+                        
+                        // Check exact matches or inclusion
+                        for (const [key, emojis] of Object.entries(WORD_MAP)) {
+                            if (transcript.includes(key)) {
+                                triggerSillyMode(emojis);
+                                // Break to avoid triggering multiple times for the same phrase 
+                                // (unless you want chaos, in which case remove break)
+                                break; 
+                            }
+                        }
+                    }
+                }
+            };
+
+            recognition.onend = () => {
+                if (isRunning) recognition.start();
+            };
+            
+            recognition.onerror = (event) => {
+                console.log("Speech Error", event.error);
+            };
+
+            recognition.start();
+        }
+
+        // --- Visual Effect ---
+        function triggerSillyMode(emojiList) {
+            // Spawn 40 particles per trigger
+            for(let i=0; i<40; i++) {
+                particles.push({
+                    x: Math.random() * confettiCanvas.width,
+                    y: -50 - Math.random() * 200, 
+                    vy: Math.random() * 5 + 3, 
+                    vx: (Math.random() - 0.5) * 4,
+                    emoji: emojiList[Math.floor(Math.random() * emojiList.length)],
+                    size: Math.random() * 30 + 20,
+                    rotation: Math.random() * 360,
+                    vr: (Math.random() - 0.5) * 10
+                });
+            }
+        }
+
+        function updateConfetti() {
+            if (particles.length === 0) {
+                confettiCtx.clearRect(0,0, confettiCanvas.width, confettiCanvas.height);
+                return;
+            }
+
+            confettiCtx.clearRect(0,0, confettiCanvas.width, confettiCanvas.height);
+            
+            for (let i = particles.length - 1; i >= 0; i--) {
+                let p = particles[i];
+                p.y += p.vy;
+                p.x += p.vx;
+                p.rotation += p.vr;
+                
+                // Draw
+                confettiCtx.save();
+                confettiCtx.translate(p.x, p.y);
+                confettiCtx.rotate(p.rotation * Math.PI / 180);
+                confettiCtx.font = `${p.size}px Arial`;
+                confettiCtx.textAlign = 'center';
+                confettiCtx.textBaseline = 'middle';
+                confettiCtx.fillText(p.emoji, 0, 0);
+                confettiCtx.restore();
+
+                // Remove if off screen
+                if (p.y > confettiCanvas.height + 50) {
+                    particles.splice(i, 1);
+                }
+            }
+        }
+
+        // --- Audio Setup ---
+        async function startAudio() {
+            try {
+                audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+                const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+
+                microphone = audioCtx.createMediaStreamSource(stream);
+                analyser = audioCtx.createAnalyser();
+                gainNode = audioCtx.createGain();
+
+                analyser.fftSize = 2048; 
+                analyser.minDecibels = -90; 
+                analyser.maxDecibels = -10;
+                analyser.smoothingTimeConstant = 0.0;
+
+                microphone.connect(gainNode);
+                gainNode.connect(analyser);
+
+                gainNode.gain.value = inputGain;
+
+                introDiv.classList.add('hidden-el');
+                controlsDiv.classList.remove('hidden-el');
+                statusInd.classList.remove('hidden-el');
+                isRunning = true;
+                
+                // Init Speech
+                initSpeechRecognition();
+                
+                drawLoop();
+
+            } catch (err) {
+                alert("Error: " + err.message + ". Please allow microphone access.");
+            }
+        }
+
+        // --- Drawing ---
+        let dataArray;
+        let tempCanvas, tempCtx;
+
+        function initTempCanvas() {
+            tempCanvas = document.createElement('canvas');
+            tempCanvas.width = canvas.width;
+            tempCanvas.height = canvas.height;
+            tempCtx = tempCanvas.getContext('2d');
+        }
+
+        function drawLoop() {
+            if (!isRunning) return;
+            requestAnimationFrame(drawLoop);
+            
+            updateConfetti();
+
+            if (isPaused) return;
+            if (audioCtx.state === 'suspended') audioCtx.resume();
+
+            if (!dataArray) {
+                dataArray = new Uint8Array(analyser.frequencyBinCount);
+                initTempCanvas();
+            }
+
+            analyser.getByteFrequencyData(dataArray);
+
+            // --- Status Logic ---
+            const signalSum = dataArray.reduce((a,b) => a+b, 0);
+            
+            if (signalSum > 0) {
+                silenceFrames = 0;
+                statusInd.textContent = "Listening...";
+                statusInd.style.color = "#00ff9d";
+            } else {
+                silenceFrames++;
+                if (silenceFrames > 120) {
+                    statusInd.textContent = "No Audio Detected";
+                    statusInd.style.color = "red";
+                }
+            }
+
+            const w = canvas.width;
+            const h = canvas.height;
+
+            // Shift left
+            ctx.globalCompositeOperation = 'copy';
+            ctx.drawImage(canvas, -scrollSpeed, 0);
+            ctx.globalCompositeOperation = 'source-over';
+
+            // Draw new strip
+            const imgData = ctx.createImageData(scrollSpeed, h);
+            const data = imgData.data;
+            const bufferLen = dataArray.length;
+            const activePalette = highContrast ? paletteContrast : palette;
+
+            for (let y = 0; y < h; y++) {
+                const percent = 1 - (y / h); 
+                const binIndex = Math.floor(percent * bufferLen * 0.8);
+
+                let val = 0;
+                if (binIndex < bufferLen) {
+                    val = dataArray[binIndex];
+                }
+
+                const pIdx = val * 4;
+                
+                for (let x = 0; x < scrollSpeed; x++) {
+                    const pixelIndex = (y * scrollSpeed + x) * 4;
+                    data[pixelIndex] = activePalette[pIdx];
+                    data[pixelIndex+1] = activePalette[pIdx+1];
+                    data[pixelIndex+2] = activePalette[pIdx+2];
+                    data[pixelIndex+3] = 255;
+                }
+            }
+
+            ctx.putImageData(imgData, w - scrollSpeed, 0);
+        }
+
+        // --- Event Listeners ---
+        startBtn.onclick = startAudio;
+        
+        pauseBtn.onclick = () => {
+            isPaused = !isPaused;
+            pauseBtn.textContent = isPaused ? "Resume" : "Pause";
+        };
+
+        contrastBtn.onclick = () => {
+            highContrast = !highContrast;
+            contrastBtn.textContent = highContrast ? "Color: Matrix" : "Color: Normal";
+            contrastBtn.style.color = highContrast ? "#fff" : "var(--accent-color)";
+            contrastBtn.style.background = highContrast ? "green" : "transparent";
+        };
+
+        gainSlider.oninput = (e) => {
+            const v = parseFloat(e.target.value);
+            if (gainNode) gainNode.gain.value = v;
+            document.getElementById('gain-val').textContent = v.toFixed(1);
+        };
+
+        speedSlider.oninput = (e) => {
+            scrollSpeed = parseInt(e.target.value);
+            document.getElementById('speed-val').textContent = scrollSpeed;
+        };
+
+        window.addEventListener('resize', () => {
+            if (isRunning) initTempCanvas();
+        });
+
+    </script>
+</body>
+</html>
